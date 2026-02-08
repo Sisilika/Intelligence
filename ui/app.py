@@ -26,14 +26,14 @@ os.makedirs(VECTOR_PATH, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # =========================
-# MODEL (LOAD ONCE)
+# MODEL
 # =========================
 
 @st.cache_resource
-def load_embedding_model():
+def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-model = load_embedding_model()
+model = load_model()
 
 # =========================
 # TEXT CLEANING
@@ -47,7 +47,7 @@ def clean_text(text):
     return text
 
 # =========================
-# DOCUMENT LOAD
+# LOAD DOC
 # =========================
 
 def load_document(file_path):
@@ -98,10 +98,13 @@ def create_vector_store(chunks):
         pickle.dump(chunks, f)
 
 # =========================
-# RETRIEVE + CONFIDENCE (YOUR EXACT LOGIC)
+# RETRIEVE + CONFIDENCE
 # =========================
 
 def retrieve_context(question, k=3):
+
+    if not os.path.exists(f"{VECTOR_PATH}/index.faiss"):
+        return "", [], 0.0
 
     index = faiss.read_index(f"{VECTOR_PATH}/index.faiss")
 
@@ -120,7 +123,7 @@ def retrieve_context(question, k=3):
     context = "\n\n".join([d.page_content for d in retrieved_docs])
     sources = [d.metadata for d in retrieved_docs]
 
-    # ⭐ YOUR CONFIDENCE MATH
+    # ⭐ YOUR CONFIDENCE LOGIC
     dists = distances[0]
 
     max_d = max(dists)
@@ -186,12 +189,23 @@ FIELDS = [
 
 def extract_shipment_data():
 
-    context, sources, confidence = retrieve_context(
-        "bill of lading shipment rate confirmation logistics shipment details carrier shipper consignee pickup delivery freight rate USD equipment truck mode",
-        k=5
-    )
+    queries = [
+        "bill of lading BOL shipment details freight rate carrier shipper consignee",
+        "pickup date delivery date equipment trailer mode transport USD total charges weight",
+        "rate confirmation logistics shipment carrier cost freight invoice shipment reference number"
+    ]
 
-    if not context or len(context.strip()) < 50 or confidence < 0.3:
+    best_context = ""
+    best_conf = 0
+
+    for q in queries:
+        context, sources, conf = retrieve_context(q, k=5)
+
+        if conf > best_conf and context:
+            best_context = context
+            best_conf = conf
+
+    if not best_context or len(best_context.strip()) < 50 or best_conf < 0.25:
         return {f: None for f in FIELDS}
 
     prompt = f"""
@@ -204,7 +218,7 @@ Fields:
 {FIELDS}
 
 Document:
-{context}
+{best_context}
 """
 
     response = ask_llm(prompt)
@@ -215,7 +229,7 @@ Document:
         return {f: None for f in FIELDS}
 
 # =========================
-# STREAMLIT UI
+# UI
 # =========================
 
 st.set_page_config(page_title="Ultra Doc Intelligence", layout="wide")
@@ -225,7 +239,7 @@ st.title("📄 Ultra Doc Intelligence")
 # Upload
 st.header("Upload Document")
 
-uploaded = st.file_uploader("Upload PDF/DOCX/TXT")
+uploaded = st.file_uploader("Upload PDF / DOCX / TXT")
 
 if uploaded:
     path = os.path.join(UPLOAD_DIR, uploaded.name)
@@ -242,10 +256,9 @@ if uploaded:
 # Ask
 st.header("Ask Questions")
 
-q = st.text_input("Ask something about document")
+q = st.text_input("Ask about document")
 
 if st.button("Ask"):
-
     context, sources, confidence = retrieve_context(q)
 
     if not context:
@@ -260,7 +273,6 @@ Context:
 Question:
 {q}
 """
-
         ans = ask_llm(prompt)
 
         if confidence < CONFIDENCE_THRESHOLD:
