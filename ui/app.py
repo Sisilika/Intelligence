@@ -11,7 +11,6 @@ from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 
-
 # ================= CONFIG =================
 
 OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
@@ -25,7 +24,6 @@ EXTRACTION_CONF_THRESHOLD = 0.12
 os.makedirs(VECTOR_PATH, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
 # ================= MODEL =================
 
 @st.cache_resource
@@ -34,8 +32,7 @@ def load_model():
 
 model = load_model()
 
-
-# ================= CLEAN TEXT =================
+# ================= CLEAN =================
 
 def clean_text(text):
     text = re.sub(r'(?<=\w)\s(?=\w)', '', text)
@@ -44,8 +41,7 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text
 
-
-# ================= LOAD DOCUMENT =================
+# ================= LOAD DOC =================
 
 def load_document(file_path):
 
@@ -65,7 +61,6 @@ def load_document(file_path):
 
     return docs
 
-
 # ================= CHUNK =================
 
 def chunk_documents(documents):
@@ -75,8 +70,7 @@ def chunk_documents(documents):
     )
     return splitter.split_documents(documents)
 
-
-# ================= VECTOR STORE =================
+# ================= VECTOR =================
 
 def create_vector_store(chunks):
 
@@ -92,8 +86,7 @@ def create_vector_store(chunks):
     with open(f"{VECTOR_PATH}/docs.pkl", "wb") as f:
         pickle.dump(chunks, f)
 
-
-# ================= RETRIEVE + CONFIDENCE =================
+# ================= RETRIEVE + CONF =================
 
 def retrieve_context(question, k=3):
 
@@ -133,8 +126,7 @@ def retrieve_context(question, k=3):
 
     return context, sources, confidence
 
-
-# ================= LLM CALL =================
+# ================= LLM =================
 
 def ask_llm(prompt):
 
@@ -148,7 +140,7 @@ def ask_llm(prompt):
     data = {
         "model": "mistralai/mixtral-8x7b-instruct",
         "messages": [
-            {"role": "system", "content": "Answer ONLY using document context."},
+            {"role": "system", "content": "Return ONLY raw JSON when extracting data."},
             {"role": "user", "content": prompt}
         ]
     }
@@ -162,13 +154,12 @@ def ask_llm(prompt):
 
     return resp_json["choices"][0]["message"]["content"]
 
-
 # ================= SAFE JSON PARSER =================
 
-def safe_json_parse(response_text, fields):
+def safe_json_parse(response):
 
     try:
-        clean = response_text.strip()
+        clean = response.strip()
 
         if "```" in clean:
             parts = clean.split("```")
@@ -180,16 +171,14 @@ def safe_json_parse(response_text, fields):
         first = clean.find("{")
         last = clean.rfind("}") + 1
 
-        if first == -1 or last == -1:
-            raise ValueError("No JSON found")
-
         clean = clean[first:last]
 
         return json.loads(clean)
 
-    except:
-        return {f: None for f in fields}
-
+    except Exception as e:
+        st.write("JSON PARSE ERROR:", e)
+        st.write("RAW RESPONSE:", response)
+        return None
 
 # ================= EXTRACTION =================
 
@@ -198,7 +187,6 @@ FIELDS = [
     "delivery_datetime","equipment_type","mode","rate",
     "currency","weight","carrier_name"
 ]
-
 
 def extract_shipment_data():
 
@@ -212,7 +200,7 @@ def extract_shipment_data():
     best_conf = 0
 
     for q in queries:
-        context, _, conf = retrieve_context(q, k=5)
+        context, sources, conf = retrieve_context(q, k=5)
 
         if conf > best_conf and context:
             best_context = context
@@ -220,6 +208,9 @@ def extract_shipment_data():
 
     if not best_context or len(best_context.strip()) < 50:
         return {f: None for f in FIELDS}
+
+    if best_conf < EXTRACTION_CONF_THRESHOLD:
+        st.warning("Low confidence extraction — verify manually")
 
     prompt = f"""
 Extract shipment data.
@@ -235,9 +226,14 @@ Document:
 """
 
     response = ask_llm(prompt)
+    st.write("RAW LLM RESPONSE:", response)
 
-    return safe_json_parse(response, FIELDS)
+    parsed = safe_json_parse(response)
 
+    if parsed:
+        return parsed
+    else:
+        return {f: None for f in FIELDS}
 
 # ================= UI =================
 
@@ -245,8 +241,6 @@ st.set_page_config(page_title="Ultra Doc Intelligence", layout="wide")
 
 st.title("📄 Ultra Doc Intelligence")
 
-
-# Upload
 st.header("Upload Document")
 
 uploaded = st.file_uploader("Upload PDF / DOCX / TXT")
@@ -263,14 +257,11 @@ if uploaded:
 
     st.success("Document processed + indexed")
 
-
-# Ask
 st.header("Ask Questions")
 
 q = st.text_input("Ask about document")
 
 if st.button("Ask"):
-
     context, sources, confidence = retrieve_context(q)
 
     if not context:
@@ -299,8 +290,6 @@ Question:
         st.subheader("Sources")
         st.json(sources)
 
-
-# Extraction
 st.header("Structured Extraction")
 
 if st.button("Extract Shipment Data"):
