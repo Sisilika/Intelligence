@@ -1,75 +1,69 @@
 import streamlit as st
-import requests
-import json
+import os
+import sys
 
-API_BASE = "http://127.0.0.1:8000"
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from backend.rag_pipeline import load_document, chunk_documents, create_vector_store, retrieve_context
+from backend.extractor import extract_shipment_data
+from backend.llm import ask_llm
 
 st.set_page_config(page_title="Doc Intelligence", layout="wide")
 
-st.title("📄 Doc Intelligence")
-st.write("Upload logistics documents, ask questions, or extract structured shipment data.")
+st.title("📄 Ultra Doc Intelligence")
 
-# -------------------
-# Upload Section
-# -------------------
-st.header("📤 Upload Document")
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-uploaded_file = st.file_uploader("Upload PDF / DOCX / TXT", type=["pdf", "docx", "txt"])
+# Upload
+st.header("Upload Document")
 
-if uploaded_file is not None:
-    if st.button("Upload Document"):
-        files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+file = st.file_uploader("Upload PDF/DOCX/TXT", type=["pdf","docx","txt"])
 
-        response = requests.post(f"{API_BASE}/upload", files=files)
+if file and st.button("Process Document"):
 
-        if response.status_code == 200:
-            st.success("✅ Document uploaded and indexed!")
-        else:
-            st.error("❌ Upload failed")
+    path = os.path.join(UPLOAD_DIR, file.name)
 
+    with open(path,"wb") as f:
+        f.write(file.getbuffer())
 
-# -------------------
-# Ask Question Section
-# -------------------
-st.header("❓ Ask Questions About Document")
+    docs = load_document(path)
+    chunks = chunk_documents(docs)
+    create_vector_store(chunks)
 
-question = st.text_input("Enter your question")
+    st.success("Document processed")
 
-if st.button("Ask Question"):
-    if question.strip() != "":
-        payload = {"question": question}
+# Ask
+st.header("Ask Questions")
 
-        response = requests.post(f"{API_BASE}/ask", json=payload)
+question = st.text_input("Enter question")
 
-        if response.status_code == 200:
-            result = response.json()
+if st.button("Ask") and question:
 
-            st.subheader("Answer")
-            st.write(result.get("answer"))
+    context, sources, confidence = retrieve_context(question)
 
-            st.subheader("Confidence")
-            st.write(result.get("confidence"))
+    if not context:
+        st.error("Not found in document")
+    else:
+        prompt = f"""
+Answer ONLY using document.
 
-            st.subheader("Sources")
-            st.json(result.get("sources"))
+Context:
+{context}
 
-        else:
-            st.error("Failed to get answer")
+Question:
+{question}
+"""
 
+        answer = ask_llm(prompt)
 
-# -------------------
-# Extraction Section
-# -------------------
-st.header("📦 Structured Shipment Extraction")
+        st.write("Answer:", answer)
+        st.write("Confidence:", confidence)
+        st.json(sources)
+
+# Extract
+st.header("Structured Extraction")
 
 if st.button("Run Extraction"):
-    response = requests.post(f"{API_BASE}/extract")
-
-    if response.status_code == 200:
-        result = response.json()
-
-        st.subheader("Extracted Shipment Data")
-        st.json(result)
-
-    else:
-        st.error("Extraction failed")
+    result = extract_shipment_data()
+    st.json(result)
