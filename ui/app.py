@@ -200,7 +200,8 @@ Document:
 {best_context}
 """
 
-    response = ask_llm(prompt)
+    response = ask_llm(prompt) 
+    st.write("RAW LLM RESPONSE:", response)
 
     try:
         return json.loads(response)
