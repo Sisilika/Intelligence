@@ -89,6 +89,7 @@ def create_vector_store(chunks):
 # ================= RETRIEVE + CONF =================
 
 def retrieve_context(question, k=3):
+    st.write("VECTOR EXISTS:", os.path.exists(f"{VECTOR_PATH}/index.faiss"))
 
     if not os.path.exists(f"{VECTOR_PATH}/index.faiss"):
         return "", [], 0.0
