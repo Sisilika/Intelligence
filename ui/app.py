@@ -19,7 +19,7 @@ VECTOR_PATH = "vector_store"
 UPLOAD_DIR = "uploads"
 
 CONFIDENCE_THRESHOLD = 0.35
-EXTRACTION_CONF_THRESHOLD = 0.12   # ⭐ Softer threshold for extraction
+EXTRACTION_CONF_THRESHOLD = 0.12
 
 os.makedirs(VECTOR_PATH, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -89,7 +89,6 @@ def create_vector_store(chunks):
 # ================= RETRIEVE + CONF =================
 
 def retrieve_context(question, k=3):
-    st.write("VECTOR EXISTS:", os.path.exists(f"{VECTOR_PATH}/index.faiss"))
 
     if not os.path.exists(f"{VECTOR_PATH}/index.faiss"):
         return "", [], 0.0
@@ -111,7 +110,7 @@ def retrieve_context(question, k=3):
     context = "\n\n".join([d.page_content for d in retrieved_docs])
     sources = [d.metadata for d in retrieved_docs]
 
-    # ⭐ YOUR EXACT CONFIDENCE MATH
+    # ⭐ YOUR CONFIDENCE MATH (UNCHANGED)
     dists = distances[0]
 
     max_d = max(dists)
@@ -141,7 +140,7 @@ def ask_llm(prompt):
     data = {
         "model": "mistralai/mixtral-8x7b-instruct",
         "messages": [
-            {"role": "system", "content": "Answer ONLY using document context."},
+            {"role": "system", "content": "Return ONLY raw JSON when extracting data."},
             {"role": "user", "content": prompt}
         ]
     }
@@ -154,6 +153,32 @@ def ask_llm(prompt):
         return str(resp_json)
 
     return resp_json["choices"][0]["message"]["content"]
+
+# ================= SAFE JSON PARSER =================
+
+def safe_json_parse(response):
+
+    try:
+        clean = response.strip()
+
+        if "```" in clean:
+            parts = clean.split("```")
+            for p in parts:
+                if "{" in p:
+                    clean = p
+                    break
+
+        first = clean.find("{")
+        last = clean.rfind("}") + 1
+
+        clean = clean[first:last]
+
+        return json.loads(clean)
+
+    except Exception as e:
+        st.write("JSON PARSE ERROR:", e)
+        st.write("RAW RESPONSE:", response)
+        return None
 
 # ================= EXTRACTION =================
 
@@ -200,12 +225,14 @@ Document:
 {best_context}
 """
 
-    response = ask_llm(prompt) 
+    response = ask_llm(prompt)
     st.write("RAW LLM RESPONSE:", response)
 
-    try:
-        return json.loads(response)
-    except:
+    parsed = safe_json_parse(response)
+
+    if parsed:
+        return parsed
+    else:
         return {f: None for f in FIELDS}
 
 # ================= UI =================
@@ -214,7 +241,6 @@ st.set_page_config(page_title="Ultra Doc Intelligence", layout="wide")
 
 st.title("📄 Ultra Doc Intelligence")
 
-# Upload
 st.header("Upload Document")
 
 uploaded = st.file_uploader("Upload PDF / DOCX / TXT")
@@ -231,7 +257,6 @@ if uploaded:
 
     st.success("Document processed + indexed")
 
-# Ask
 st.header("Ask Questions")
 
 q = st.text_input("Ask about document")
@@ -265,7 +290,6 @@ Question:
         st.subheader("Sources")
         st.json(sources)
 
-# Extraction
 st.header("Structured Extraction")
 
 if st.button("Extract Shipment Data"):
