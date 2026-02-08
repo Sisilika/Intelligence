@@ -1,35 +1,21 @@
 import os
-import re
 import pickle
 import faiss
 import numpy as np
+import re
 
-from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 
-load_dotenv()
-
 VECTOR_PATH = "vector_store"
-CONFIDENCE_THRESHOLD = 0.25
 
-
-# =========================
-# TEXT CLEANING
-# =========================
 def clean_text(text):
-    text = re.sub(r'(?<=\w)\s(?=\w)', '', text)
-    text = text.replace("U S D", "USD")
-    text = re.sub(r'\$ (\d)', r'$\1', text)
     text = re.sub(r'\s+', ' ', text)
     return text
 
-
-# =========================
-# LOAD DOCUMENT
-# =========================
 def load_document(file_path):
+
     if file_path.endswith(".pdf"):
         loader = PyPDFLoader(file_path)
     elif file_path.endswith(".txt"):
@@ -37,30 +23,24 @@ def load_document(file_path):
     elif file_path.endswith(".docx"):
         loader = Docx2txtLoader(file_path)
     else:
-        raise Exception("Unsupported file type")
+        raise Exception("Unsupported file")
 
     docs = loader.load()
 
-    for doc in docs:
-        doc.page_content = clean_text(doc.page_content)
+    for d in docs:
+        d.page_content = clean_text(d.page_content)
 
     return docs
 
-
-# =========================
-# CHUNKING (Improved)
-# =========================
 def chunk_documents(documents):
+
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,      # Increased
-        chunk_overlap=200     # Increased
+        chunk_size=1000,
+        chunk_overlap=200
     )
+
     return splitter.split_documents(documents)
 
-
-# =========================
-# VECTOR STORE CREATION
-# =========================
 def create_vector_store(chunks):
 
     model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -80,10 +60,6 @@ def create_vector_store(chunks):
     with open(f"{VECTOR_PATH}/docs.pkl", "wb") as f:
         pickle.dump(chunks, f)
 
-
-# =========================
-# RETRIEVAL + CONFIDENCE
-# =========================
 def retrieve_context(question, k=3):
 
     model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -105,18 +81,7 @@ def retrieve_context(question, k=3):
     context = "\n\n".join([d.page_content for d in retrieved_docs])
     sources = [d.metadata for d in retrieved_docs]
 
-    # ===== CONFIDENCE SCORING (Improved Stability) =====
     dists = distances[0]
-
-    max_d = max(dists)
-    min_d = min(dists)
-
-    if max_d == min_d:
-        confidence = 0.5
-    else:
-        norm_scores = [(max_d - d) / (max_d - min_d) for d in dists]
-        confidence = float(np.mean(norm_scores) * (1 - np.std(norm_scores)))
-
-    confidence = max(0.0, min(confidence, 1.0))
+    confidence = float(np.mean(1/(1+dists)))
 
     return context, sources, confidence
