@@ -11,9 +11,7 @@ from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 
-# =========================
-# CONFIG
-# =========================
+# ================= CONFIG =================
 
 OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
 
@@ -21,13 +19,12 @@ VECTOR_PATH = "vector_store"
 UPLOAD_DIR = "uploads"
 
 CONFIDENCE_THRESHOLD = 0.35
+EXTRACTION_CONF_THRESHOLD = 0.12   # ⭐ Softer threshold for extraction
 
 os.makedirs(VECTOR_PATH, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# =========================
-# MODEL
-# =========================
+# ================= MODEL =================
 
 @st.cache_resource
 def load_model():
@@ -35,9 +32,7 @@ def load_model():
 
 model = load_model()
 
-# =========================
-# TEXT CLEANING
-# =========================
+# ================= CLEAN =================
 
 def clean_text(text):
     text = re.sub(r'(?<=\w)\s(?=\w)', '', text)
@@ -46,9 +41,7 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text
 
-# =========================
-# LOAD DOC
-# =========================
+# ================= LOAD DOC =================
 
 def load_document(file_path):
 
@@ -68,9 +61,7 @@ def load_document(file_path):
 
     return docs
 
-# =========================
-# CHUNKING
-# =========================
+# ================= CHUNK =================
 
 def chunk_documents(documents):
     splitter = RecursiveCharacterTextSplitter(
@@ -79,9 +70,7 @@ def chunk_documents(documents):
     )
     return splitter.split_documents(documents)
 
-# =========================
-# VECTOR STORE
-# =========================
+# ================= VECTOR =================
 
 def create_vector_store(chunks):
 
@@ -97,9 +86,7 @@ def create_vector_store(chunks):
     with open(f"{VECTOR_PATH}/docs.pkl", "wb") as f:
         pickle.dump(chunks, f)
 
-# =========================
-# RETRIEVE + CONFIDENCE
-# =========================
+# ================= RETRIEVE + CONF =================
 
 def retrieve_context(question, k=3):
 
@@ -123,7 +110,7 @@ def retrieve_context(question, k=3):
     context = "\n\n".join([d.page_content for d in retrieved_docs])
     sources = [d.metadata for d in retrieved_docs]
 
-    # ⭐ YOUR CONFIDENCE LOGIC
+    # ⭐ YOUR EXACT CONFIDENCE MATH
     dists = distances[0]
 
     max_d = max(dists)
@@ -139,9 +126,7 @@ def retrieve_context(question, k=3):
 
     return context, sources, confidence
 
-# =========================
-# LLM CALL
-# =========================
+# ================= LLM =================
 
 def ask_llm(prompt):
 
@@ -169,30 +154,20 @@ def ask_llm(prompt):
 
     return resp_json["choices"][0]["message"]["content"]
 
-# =========================
-# EXTRACTION
-# =========================
+# ================= EXTRACTION =================
 
 FIELDS = [
-    "shipment_id",
-    "shipper",
-    "consignee",
-    "pickup_datetime",
-    "delivery_datetime",
-    "equipment_type",
-    "mode",
-    "rate",
-    "currency",
-    "weight",
-    "carrier_name"
+    "shipment_id","shipper","consignee","pickup_datetime",
+    "delivery_datetime","equipment_type","mode","rate",
+    "currency","weight","carrier_name"
 ]
 
 def extract_shipment_data():
 
     queries = [
-        "bill of lading BOL shipment details freight rate carrier shipper consignee",
-        "pickup date delivery date equipment trailer mode transport USD total charges weight",
-        "rate confirmation logistics shipment carrier cost freight invoice shipment reference number"
+        "bill of lading BOL number shipper consignee freight carrier SCAC",
+        "pickup date delivery date trailer equipment truck mode transport load number",
+        "total charges freight cost USD rate line haul fuel surcharge weight"
     ]
 
     best_context = ""
@@ -205,8 +180,11 @@ def extract_shipment_data():
             best_context = context
             best_conf = conf
 
-    if not best_context or len(best_context.strip()) < 50 or best_conf < 0.25:
+    if not best_context or len(best_context.strip()) < 50:
         return {f: None for f in FIELDS}
+
+    if best_conf < EXTRACTION_CONF_THRESHOLD:
+        st.warning("Low confidence extraction — verify manually")
 
     prompt = f"""
 Extract shipment data.
@@ -228,9 +206,7 @@ Document:
     except:
         return {f: None for f in FIELDS}
 
-# =========================
-# UI
-# =========================
+# ================= UI =================
 
 st.set_page_config(page_title="Ultra Doc Intelligence", layout="wide")
 
